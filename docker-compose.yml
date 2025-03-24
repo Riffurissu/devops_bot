@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  tg_bot:
+    build:
+      context: ./bot_image
+      dockerfile: ./Dockerfile
+    container_name: tg_bot
+    depends_on:
+      pg_server:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+  pg_server:
+    build:
+      context: ./db_image
+      dockerfile: ./Dockerfile
+    container_name: pg_server
+    environment:
+      POSTGRES_PASSWORD: tgbot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot_network
+    volumes:
+      - pg_server_data:/var/lib/postgresql/data
+    ports:
+      - "10001:5432"
+
+  pg_repl:
+    build:
+      context: ./db_repl_image
+      dockerfile: ./Dockerfile
+    container_name: pg_repl
+    environment:
+      POSTGRES_PASSWORD: tgbot
+    depends_on:
+      pg_server:
+        condition: service_healthy
+    networks:
+      - bot_network
+    volumes:
+      - pg_repl_data:/var/lib/postgresql/data
+    ports:
+      - "10002:5432"
+
+networks:
+  bot_network:
+    name: bot_network
+    driver: bridge
+
+volumes:
+  pg_server_data:
+    name: pg_server_data
+  pg_repl_data:
+    name: pg_repl_data
