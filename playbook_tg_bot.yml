@@ -1,0 +1,175 @@
+- name: pg_server deployment
+  hosts: pg_server
+  become: yes
+
+  tasks:
+    - name: Downloading curl and ca-certs
+      apt:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: yes
+
+    - name: Creating pgdg dir
+      become: yes
+      shell: install -d /usr/share/postgresql-common/pgdg
+
+    - name: Downloading repo signing key
+      become: yes
+      shell: curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+    - name: Creating the repository configuration file
+      become: yes
+      shell: sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+
+    - name: PostgreSQL installation
+      apt:
+        name:
+          - postgresql-16
+          - postgresql-contrib
+        state: present
+        update_cache: yes
+
+    - name: Stopping PostgreSQL service
+      systemd:
+        name: postgresql
+        state: stopped
+        enabled: yes
+
+    - name: Copying postgresql config file
+      copy:
+        src: postgresql.conf
+        dest: /etc/postgresql/16/main/postgresql.conf
+        owner: postgres
+        group: postgres
+
+    - name: Copying pg_hba file
+      copy:
+        src: pg_hba.conf
+        dest: /etc/postgresql/16/main/pg_hba.conf
+        owner: postgres
+        group: postgres
+
+    - name: Starting PostgreSQL service
+      systemd:
+        name: postgresql
+        state: restarted
+        enabled: yes
+
+    - name: Copying init_db.sql
+      copy:
+        src: init_db.sql
+        dest: /init.sql
+        owner: postgres
+        group: postgres
+
+    - name: Changing postgres passwd
+      become: yes
+      shell: echo postgres:tgbot | /usr/sbin/chpasswd
+
+    - name: Running init_db.sql
+      become: yes
+      become_user: postgres
+      command: psql -U postgres -f /init.sql
+
+- name: pg_repl deployment
+  hosts: pg_repl
+  become: yes
+  vars:
+    pg_server_ip: 192.168.231.176
+
+  tasks:
+    - name: Downloading curl and ca-certs
+      apt:
+        name:
+          - curl
+          - ca-certificates
+        state: present
+        update_cache: yes
+
+    - name: Creating pgdg dir
+      become: yes
+      shell: install -d /usr/share/postgresql-common/pgdg
+
+    - name: Downloading repo signing key
+      become: yes
+      shell: curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+    - name: Creating the repository configuration file
+      become: yes
+      shell: sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+
+    - name: PostgreSQL installation
+      apt:
+        name:
+          - postgresql-16
+          - postgresql-contrib
+        state: present
+        update_cache: yes
+
+    - name: Stopping PostgreSQL service
+      systemd:
+        name: postgresql
+        state: stopped
+        enabled: yes
+
+    - name: Deleting database files
+      file:
+        state: "{{ item }}"
+        path: /var/lib/postgresql/16/main/
+        owner: postgres
+        group: postgres
+        mode: '0777'
+      with_items:
+        - absent
+        - directory
+
+    - name: Starting PostgreSQL service
+      systemd:
+        name: postgresql
+        state: restarted
+        enabled: yes
+
+    - name: Creating database replication
+      become: yes
+      become_user: postgres
+      shell: pg_basebackup -R -h "{{ pg_server_ip  }}" -U repl_bot_user -D /var/lib/postgresql/16/main/ -P
+
+- name: tg_bot deployment
+  hosts: tg_bot
+  become: yes
+
+  tasks:
+    - name: Installing packages
+      apt:
+        name:
+          - git
+          - python3
+          - python3-pip
+        state: present
+        update_cache: yes
+
+    - name: Clone Telegram bot repository
+      become: yes
+      git:
+        repo: https://github.com/Riffurissu/devops_bot.git
+        dest: /devops_bot
+        version: docker
+
+    - name: Copying .env
+      become: yes
+      copy:
+        src: .env
+        dest: /devops_bot
+        owner: ansible
+        group: ansible
+
+    - name: Install python requirements
+      pip:
+        requirements: /devops_bot/bot_image/requirements.txt
+        break_system_packages: true
+
+    - name: Run tg_bot
+      become: yes
+      shell: python /home/ansible/devops_bot/bot_image/bot.py
